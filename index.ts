@@ -54,7 +54,6 @@ const getPullRequest = tool(
   },
 );
 
-// "https://api.github.com/repos/VolkRiot/nextjs_2024/pulls/1/comments"
 const getComments = tool(
   async ({ owner, repo, pull_number }) => {
     const token = process.env.GITHUB_ACCESS_TOKEN;
