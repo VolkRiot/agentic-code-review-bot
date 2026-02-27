@@ -208,12 +208,14 @@ const agent = new StateGraph(MessagesState)
   .compile();
 
 // Invoke
+const instruction = process.argv[2];
+if (!instruction) {
+  console.error("Usage: bun index.ts <instruction>");
+  process.exit(1);
+}
+
 const result = await agent.invoke({
-  messages: [
-    new HumanMessage(
-      "Provide a review for the open pull request found at https://github.com/VolkRiot/nextjs_2024/pull/1",
-    ),
-  ],
+  messages: [new HumanMessage(instruction)],
 });
 
 for (const message of result.messages) {
