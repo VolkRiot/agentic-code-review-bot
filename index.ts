@@ -21,19 +21,84 @@ const model = new ChatAnthropic({
 });
 
 // Define tools
+const getPullRequest = tool(
+  async ({ owner, repo, pull_number }) => {
+    const token = process.env.GITHUB_ACCESS_TOKEN;
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    };
 
-// const add = tool(({ a, b }) => a + b, {
-//   name: "add",
-//   description: "Add two numbers",
-//   schema: z.object({
-//     a: z.number().describe("First number"),
-//     b: z.number().describe("Second number"),
-//   }),
-// });
+    const [pr, files] = await Promise.all([
+      fetch(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${pull_number}`,
+        { headers },
+      ).then((r) => r.json()),
+      fetch(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${pull_number}/files`,
+        { headers },
+      ).then((r) => r.json()),
+    ]);
+
+    return { pr, files };
+  },
+  {
+    name: "get_pull_request",
+    description: "Fetch a GitHub PR with its changed files and diffs",
+    schema: z.object({
+      owner: z.string(),
+      repo: z.string(),
+      pull_number: z.number(),
+    }),
+  },
+);
+
+const postPullRequestReview = tool(
+  async ({ owner, repo, pull_number, comments, body }) => {
+    const token = process.env.GITHUB_ACCESS_TOKEN;
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pulls/${pull_number}/reviews`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          body, // top-level review summary
+          event: "COMMENT",
+          comments, // inline comments
+        }),
+      },
+    );
+    const data = await res.json();
+    return { id: data.id, html_url: data.html_url };
+  },
+  {
+    name: "post_pull_request_review",
+    description: "Post a code review with inline comments to a GitHub PR",
+    schema: z.object({
+      owner: z.string(),
+      repo: z.string(),
+      pull_number: z.number(),
+      body: z.string().describe("Top-level review summary"),
+      comments: z.array(
+        z.object({
+          path: z.string().describe("File path, e.g. src/index.ts"),
+          line: z.number().describe("Line number in the file (right side)"),
+          side: z.enum(["LEFT", "RIGHT"]).default("RIGHT"),
+          body: z.string().describe("The inline comment text"),
+        }),
+      ),
+    }),
+  },
+);
 
 // Augment the LLM with tools
 const toolsByName = {
-  //   [add.name]: add,
+  [getPullRequest.name]: getPullRequest,
+  [postPullRequestReview.name]: postPullRequestReview,
 };
 const tools = Object.values(toolsByName);
 const modelWithTools = model.bindTools(tools);
@@ -50,7 +115,13 @@ const MessagesState = new StateSchema({
 const llmCall: GraphNode<typeof MessagesState> = async (state) => {
   const response = await modelWithTools.invoke([
     new SystemMessage(
-      "You are a helpful assistant tasked with performing arithmetic on a set of inputs.",
+      `You are a code reviewer for Github repositories. When asked to review a PR:
+        1. Call get_pull_request to fetch the diff.
+        2. Analyze each changed file in the diff.
+        3. Call post_pull_request_review with:
+            - A brief top-level summary in "body"
+            - Inline "comments" for specific issues: include the file path, the exact line number from the diff, and a clear explanation.
+        Only comment on lines that actually appear in the diff (additions or context lines on the RIGHT side).`,
     ),
     ...state.messages,
   ]);
@@ -106,9 +177,12 @@ const agent = new StateGraph(MessagesState)
   .compile();
 
 // Invoke
-
 const result = await agent.invoke({
-  messages: [new HumanMessage("Add 3 and 4.")],
+  messages: [
+    new HumanMessage(
+      "Provide a review for the open pull request found at https://github.com/VolkRiot/nextjs_2024/pull/1",
+    ),
+  ],
 });
 
 for (const message of result.messages) {
