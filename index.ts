@@ -14,9 +14,10 @@ import { SystemMessage } from "@langchain/core/messages";
 import { AIMessage, ToolMessage } from "@langchain/core/messages";
 import { HumanMessage } from "@langchain/core/messages";
 import * as z from "zod";
+import { systemMessagePrompt } from "./system_message";
 
 const model = new ChatAnthropic({
-  model: "claude-haiku-4-5",
+  model: "claude-4-opus-20250514",
   temperature: 0,
 });
 
@@ -45,6 +46,43 @@ const getPullRequest = tool(
   {
     name: "get_pull_request",
     description: "Fetch a GitHub PR with its changed files and diffs",
+    schema: z.object({
+      owner: z.string(),
+      repo: z.string(),
+      pull_number: z.number(),
+    }),
+  },
+);
+
+// "https://api.github.com/repos/VolkRiot/nextjs_2024/pulls/1/comments"
+const getComments = tool(
+  async ({ owner, repo, pull_number }) => {
+    const token = process.env.GITHUB_ACCESS_TOKEN;
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github.v3+json",
+    };
+
+    const comments = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pulls/${pull_number}/comments`,
+      { headers },
+    ).then((r) => r.json());
+
+    const commentsDetails = comments.map(
+      ({ id, body, diff_hunk, user, in_reply_to_id }) => ({
+        id,
+        body,
+        diff_hunk,
+        userId: user.id,
+        inReplyToId: in_reply_to_id,
+      }),
+    );
+
+    return { commentsDetails };
+  },
+  {
+    name: "get_pull_request_comments",
+    description: "Fetch a GitHub PR's current comments",
     schema: z.object({
       owner: z.string(),
       repo: z.string(),
@@ -99,6 +137,7 @@ const postPullRequestReview = tool(
 const toolsByName = {
   [getPullRequest.name]: getPullRequest,
   [postPullRequestReview.name]: postPullRequestReview,
+  [getComments.name]: getComments,
 };
 const tools = Object.values(toolsByName);
 const modelWithTools = model.bindTools(tools);
@@ -114,15 +153,7 @@ const MessagesState = new StateSchema({
 // Model node
 const llmCall: GraphNode<typeof MessagesState> = async (state) => {
   const response = await modelWithTools.invoke([
-    new SystemMessage(
-      `You are a code reviewer for Github repositories. When asked to review a PR:
-        1. Call get_pull_request to fetch the diff.
-        2. Analyze each changed file in the diff.
-        3. Call post_pull_request_review with:
-            - A brief top-level summary in "body"
-            - Inline "comments" for specific issues: include the file path, the exact line number from the diff, and a clear explanation.
-        Only comment on lines that actually appear in the diff (additions or context lines on the RIGHT side).`,
-    ),
+    new SystemMessage(systemMessagePrompt),
     ...state.messages,
   ]);
   return {
