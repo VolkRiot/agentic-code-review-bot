@@ -100,6 +100,7 @@ const getComments = tool(
         body,
         diff_hunk,
         userId: user.id,
+        userLogin: user.login,
         inReplyToId: in_reply_to_id,
       }),
     );
@@ -224,6 +225,37 @@ const getFileContents = tool(
   },
 );
 
+const replyToComment = tool(
+  async ({ owner, repo, pull_number, comment_id, body }) => {
+    const token = process.env.GITHUB_ACCESS_TOKEN;
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pulls/${pull_number}/comments`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ body, in_reply_to_id: comment_id }),
+      },
+    );
+    const data = (await res.json()) as { id: number; html_url: string };
+    return { id: data.id, html_url: data.html_url };
+  },
+  {
+    name: "reply_to_comment",
+    description: "Post a reply to an existing PR review comment thread",
+    schema: z.object({
+      owner: z.string(),
+      repo: z.string(),
+      pull_number: z.number(),
+      comment_id: z.number().describe("The ID of the comment to reply to"),
+      body: z.string().describe("The reply text"),
+    }),
+  },
+);
+
 // Augment the LLM with tools
 const toolsByName = {
   [getPullRequest.name]: getPullRequest,
@@ -232,6 +264,7 @@ const toolsByName = {
   [getDependenciesDifference.name]: getDependenciesDifference,
   [searchCode.name]: searchCode,
   [getFileContents.name]: getFileContents,
+  [replyToComment.name]: replyToComment,
 };
 const tools = Object.values(toolsByName);
 const modelWithTools = model.bindTools(tools);
@@ -247,7 +280,7 @@ const MessagesState = new StateSchema({
 // Model node
 const llmCall: GraphNode<typeof MessagesState> = async (state) => {
   const response = await modelWithTools.invoke([
-    new SystemMessage(systemMessagePrompt),
+    new SystemMessage(systemMessagePrompt(process.env.ROBO_USERNAME as string)),
     ...state.messages,
   ]);
   return {
@@ -307,18 +340,14 @@ const agent = new StateGraph(MessagesState)
   .compile();
 
 // Invoke
-// const instruction = process.argv[2];
-// if (!instruction) {
-//   console.error("Usage: bun index.ts <instruction>");
-//   process.exit(1);
-// }
+const instruction = process.argv[2];
+if (!instruction) {
+  console.error("Usage: bun index.ts <instruction>");
+  process.exit(1);
+}
 
 const result = await agent.invoke({
-  messages: [
-    new HumanMessage(
-      "Provide a review for the open pull request found at https://github.com/VolkRiot/nextjs_2024/pull/2",
-    ),
-  ],
+  messages: [new HumanMessage(instruction)],
 });
 
 for (const message of result.messages) {
