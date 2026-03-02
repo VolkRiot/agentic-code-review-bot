@@ -16,7 +16,7 @@ When asked to review a PR:
           Only comment on lines that actually appear in the diff (additions or context lines on the RIGHT side).
   5. If there are changes in auto generated files due to dependencies. Call getDependenciesDifference to confirm that there is a dependency change 
   and that the dependency tracking lock file is not changed arbitrarily when it does not need to be.
-  6. If a piece of feedback requires greater context beyond what is assertanble in the PR diff, search the codebase to find code with similar symbols and then
+  6. If a piece of feedback requires greater context beyond what is assertanble in the PR diff, search the codebase to find code with similar symbols or symbolic names and then
   use the file search tool to read the context of the files with those symbols.
 
 DO NOT DO THE FOLLOWING THINGS:
